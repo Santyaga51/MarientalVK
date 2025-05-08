@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Фото-Память | VK Игра</title>
+    <script>
+        // Фикс для окружения VK и CORS
+        window.process = { env: { NODE_ENV: 'production' } };
+        document.domain = document.domain;
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            color: #2c3e50;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        
+        #game-container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        select, button {
+            padding: 10px 15px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #5181b8;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #3a6a99;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        #game-info {
+            display: flex;
+            justify-content: space-around;
+            background: rgba(255,255,255,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        #game-board {
+            display: grid;
+            gap: 10px;
+            justify-content: center;
+            margin: 0 auto;
+        }
+        
+        .card {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(145deg, #5181b8, #2c3e50);
+            border-radius: 8px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: none;
+        }
+        
+        .card.flipped img {
+            display: block;
+        }
+        
+        .card.matched {
+            background: linear-gradient(145deg, #4bb34b, #2a7a2a);
+            cursor: default;
+            animation: pulse 0.5s;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        #game-over {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 100;
+        }
+        
+        #vk_share_button {
+            margin-top: 20px;
+            background: #5181b8;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .error-message {
+            color: #e74c3c;
+            padding: 20px;
+            background: white;
+            border-radius: 5px;
+            max-width: 500px;
+            margin: 20px auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <h1>🌟 Фото-Память</h1>
+        
+        <div class="controls">
+            <select id="difficulty">
+                <option value="16">Лёгкий (4×4)</option>
+                <option value="24" selected>Средний (6×4)</option>
+                <option value="36">Сложный (6×6)</option>
+            </select>
+            <button id="start-btn">Начать игру</button>
+            <button id="hint-btn" disabled>Подсказка (1 раз)</button>
+        </div>
+        
+        <div id="game-info">
+            <div>⏱️ Время: <span id="time">60</span> сек</div>
+            <div>🔄 Ходы: <span id="moves">0</span></div>
+            <div>🏆 Рекорд: <span id="best-score">-</span></div>
+        </div>
+        
+        <div id="game-board"></div>
+        
+        <button id="vk_share_button" style="display: none;">Поделиться результатом</button>
+        
+        <div id="game-over">
+            <h2 id="result-message"></h2>
+            <button id="restart-btn">Играть снова</button>
+            <div id="records">
+                <h3>🏆 Ваши рекорды:</h3>
+                <div>Лёгкий: <span id="easy-record">-</span></div>
+                <div>Средний: <span id="medium-record">-</span></div>
+                <div>Сложный: <span id="hard-record">-</span></div>
+            </div>
+        </div>
+        
+        <div id="error-container" class="error-message" style="display: none;"></div>
+    </div>
+
+    <!-- VK SDK с резервной загрузкой -->
+    <script src="https://vk.com/js/api/openapi.js?169" async></script>
+    
+    <script>
+        // Конфигурация
+        const APP_ID = 53539961; // Замените на ваш ID
+        const CORS_PROXY = 'https://corsproxy.io/?';
+        
+        // Изображения через прокси
+        const images = [
+            CORS_PROXY + 'https://i.ibb.co/hx1QGRtH/photo1.jpg',
+            CORS_PROXY + 'https://i.ibb.co/nMJ9Jn96/photo2.jpg',
+            CORS_PROXY + 'https://i.ibb.co/SX9BgSHr/photo3.jpg',
+            CORS_PROXY + 'https://i.ibb.co/HDTC30Dh/photo4.jpg',
+            CORS_PROXY + 'https://i.ibb.co/dw48sMB2/photo5.jpg',
+            CORS_PROXY + 'https://i.ibb.co/9mRP3pjP/photo6.jpg',
+            CORS_PROXY + 'https://i.ibb.co/BKrP9B0q/photo7.jpg',
+            CORS_PROXY + 'https://i.ibb.co/23dkFM3K/photo8.jpg',
+            CORS_PROXY + 'https://i.ibb.co/6RCY2zhB/photo9.jpg',
+            CORS_PROXY + 'https://i.ibb.co/jksJDfXM/photo10.jpg',
+            CORS_PROXY + 'https://i.ibb.co/qY7KC2rK/photo11.jpg',
+            CORS_PROXY + 'https://i.ibb.co/RFf79TM/photo12.jpg'
+        ];
+
+        // Элементы игры
+        const elements = {
+            gameBoard: document.getElementById('game-board'),
+            startBtn: document.getElementById('start-btn'),
+            hintBtn: document.getElementById('hint-btn'),
+            difficulty: document.getElementById('difficulty'),
+            timeDisplay: document.getElementById('time'),
+            movesDisplay: document.getElementById('moves'),
+            bestScore: document.getElementById('best-score'),
+            gameOver: document.getElementById('game-over'),
+            resultMessage: document.getElementById('result-message'),
+            restartBtn: document.getElementById('restart-btn'),
+            shareBtn: document.getElementById('vk_share_button'),
+            easyRecord: document.getElementById('easy-record'),
+            mediumRecord: document.getElementById('medium-record'),
+            hardRecord: document.getElementById('hard-record'),
+            errorContainer: document.getElementById('error-container')
+        };
+
+        // Состояние игры
+        const state = {
+            cards: [],
+            flippedCards: [],
+            matchedPairs: 0,
+            moves: 0,
+            timer: null,
+            timeLeft: 60,
+            canFlip: true,
+            gameActive: false,
+            hintUsed: false,
+            currentDifficulty: 24,
+            playerName: 'Игрок',
+            playerPhoto: ''
+        };
+
+        // Инициализация VK
+        function initVK() {
+            return new Promise((resolve, reject) => {
+                if (typeof VK !== 'undefined') {
+                    VK.init({
+                        apiId: APP_ID,
+                        onlyWidgets: true
+                    });
+                    console.log('VK SDK initialized');
+                    resolve();
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.src = 'https://vk.com/js/api/openapi.js?169';
+                script.async = true;
+                script.onload = () => {
+                    VK.init({
+                        apiId: APP_ID,
+                        onlyWidgets: true
+                    });
+                    console.log('VK SDK loaded dynamically');
+                    resolve();
+                };
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        // Показать ошибку
+        function showError(message) {
+            elements.errorContainer.textContent = message;
+            elements.errorContainer.style.display = 'block';
+            console.error(message);
+        }
+
+        // Загрузка рекордов
+        function loadRecords() {
+            if (typeof VK === 'undefined') return;
+
+            VK.Api.call('storage.get', {
+                keys: 'easy_record,medium_record,hard_record',
+                global: 1
+            }, function(r) {
+                if (r.response) {
+                    elements.easyRecord.textContent = r.response.easy_record || '-';
+                    elements.mediumRecord.textContent = r.response.medium_record || '-';
+                    elements.hardRecord.textContent = r.response.hard_record || '-';
+                    updateBestScoreDisplay();
+                }
+            });
+        }
+
+        // Обновление отображения рекорда
+        function updateBestScoreDisplay() {
+            const difficulty = parseInt(elements.difficulty.value);
+            const key = difficulty === 16 ? 'easy_record' : 
+                       difficulty === 24 ? 'medium_record' : 'hard_record';
+            
+            VK.Api.call('storage.get', {
+                key: key,
+                global: 1
+            }, function(r) {
+                elements.bestScore.textContent = r.response ? r.response : '-';
+            });
+        }
+
+        // Сохранение рекорда
+        function saveRecord(difficulty, moves) {
+            const key = difficulty === 16 ? 'easy_record' : 
+                        difficulty === 24 ? 'medium_record' : 'hard_record';
+            
+            VK.Api.call('storage.set', {
+                key: key,
+                value: moves,
+                global: 1
+            }, function() {
+                updateBestScoreDisplay();
+                loadRecords();
+            });
+        }
+
+        // Создание игрового поля
+        function createBoard() {
+            elements.gameBoard.innerHTML = '';
+            state.currentDifficulty = parseInt(elements.difficulty.value);
+            const pairsNeeded = state.currentDifficulty / 2;
+            
+            const shuffledImages = shuffle(images.slice()).slice(0, pairsNeeded);
+            const pairs = [...shuffledImages, ...shuffledImages];
+            state.cards = shuffle(pairs);
+            
+            let columns = 6;
+            if (state.currentDifficulty === 16) columns = 4;
+            if (state.currentDifficulty === 36) columns = 6;
+            
+            elements.gameBoard.style.gridTemplateColumns = `repeat(${columns}, 100px)`;
+            
+            state.cards.forEach((img, index) => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.dataset.index = index;
+                card.dataset.image = img;
+                card.innerHTML = `<img src="${img}" alt="Карточка">`;
+                card.addEventListener('click', flipCard);
+                elements.gameBoard.appendChild(card);
+            });
+        }
+
+        // Показать подсказку
+        function showHint() {
+            if (state.hintUsed || !state.gameActive) return;
+            
+            state.hintUsed = true;
+            elements.hintBtn.disabled = true;
+            
+            const allCards = document.querySelectorAll('.card');
+            allCards.forEach(card => {
+                card.classList.add('flipped');
+            });
+            
+            setTimeout(() => {
+                allCards.forEach(card => {
+                    if (!card.classList.contains('matched')) {
+                        card.classList.remove('flipped');
+                    }
+                });
+            }, 2000);
+        }
+
+        // Перемешивание массива
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        // Переворот карты
+        function flipCard() {
+            if (!state.gameActive || !state.canFlip || 
+                this.classList.contains('flipped') || 
+                this.classList.contains('matched')) return;
+            
+            this.classList.add('flipped');
+            state.flippedCards.push(this);
+            
+            if (state.flippedCards.length === 2) {
+                state.moves++;
+                elements.movesDisplay.textContent = state.moves;
+                state.canFlip = false;
+                setTimeout(checkMatch, 500);
+            }
+        }
+
+        // Проверка совпадения
+        function checkMatch() {
+            const [card1, card2] = state.flippedCards;
+            
+            if (card1.dataset.image === card2.dataset.image) {
+                card1.classList.add('matched');
+                card2.classList.add('matched');
+                state.matchedPairs++;
+                
+                const totalPairs = state.currentDifficulty / 2;
+                if (state.matchedPairs === totalPairs) {
+                    winGame();
+                }
+            } else {
+                card1.classList.remove('flipped');
+                card2.classList.remove('flipped');
+            }
+            
+            state.flippedCards = [];
+            state.canFlip = true;
+        }
+
+        // Таймер
+        function startTimer() {
+            state.timeLeft = 60;
+            elements.timeDisplay.textContent = state.timeLeft;
+            
+            state.timer = setInterval(() => {
+                state.timeLeft--;
+                elements.timeDisplay.textContent = state.timeLeft;
+                
+                if (state.timeLeft <= 0) {
+                    endGame(false);
+                }
+            }, 1000);
+        }
+
+        // Победа
+        function winGame() {
+            clearInterval(state.timer);
+            saveRecord(state.currentDifficulty, state.moves);
+            
+            if (typeof VK !== 'undefined') {
+                VK.Api.call('users.get', { fields: 'first_name' }, function(r) {
+                    if (r.response) {
+                        state.playerName = r.response[0].first_name;
+                        elements.resultMessage.textContent = `Победа, ${state.playerName}! 🎉 Ходы: ${state.moves}`;
+                    } else {
+                        elements.resultMessage.textContent = `Победа! 🎉 Ходы: ${state.moves}`;
+                    }
+                    endGame(true);
+                    elements.shareBtn.style.display = 'block';
+                });
+            } else {
+                elements.resultMessage.textContent = `Победа! 🎉 Ходы: ${state.moves}`;
+                endGame(true);
+            }
+        }
+
+        // Конец игры
+        function endGame(isWin) {
+            state.gameActive = false;
+            clearInterval(state.timer);
+            
+            if (!isWin) {
+                elements.resultMessage.textContent = 'Время вышло! 😢';
+            }
+            
+            elements.gameOver.style.display = 'flex';
+        }
+
+        // Начало игры
+        function startGame() {
+            elements.errorContainer.style.display = 'none';
+            
+            state.gameActive = true;
+            state.moves = 0;
+            state.matchedPairs = 0;
+            state.hintUsed = false;
+            elements.movesDisplay.textContent = '0';
+            elements.gameOver.style.display = 'none';
+            elements.shareBtn.style.display = 'none';
+            elements.hintBtn.disabled = false;
+            
+            createBoard();
+            
+            setTimeout(() => {
+                showHint();
+            }, 500);
+            
+            setTimeout(() => {
+                startTimer();
+            }, 2500);
+        }
+
+        // Инициализация игры
+        async function initGame() {
+            try {
+                // Инициализация VK
+                await initVK();
+                
+                // Проверка авторизации
+                await new Promise((resolve) => {
+                    VK.Auth.getLoginStatus(response => {
+                        if (response.status === 'connected') {
+                            resolve();
+                        } else {
+                            VK.Auth.login(resolve, 4);
+                        }
+                    });
+                });
+                
+                // Загрузка данных
+                loadRecords();
+                
+                // Настройка событий
+                elements.startBtn.addEventListener('click', startGame);
+                elements.restartBtn.addEventListener('click', startGame);
+                elements.hintBtn.addEventListener('click', showHint);
+                elements.difficulty.addEventListener('change', updateBestScoreDisplay);
+                
+                // Кнопка "Поделиться"
+                elements.shareBtn.addEventListener('click', function() {
+                    if (typeof VK !== 'undefined') {
+                        VK.callMethod("share", {
+                            title: `Я набрал ${state.moves} очков в игре "Фото-Память"!`,
+                            image: images[0],
+                            description: "Сможешь побить мой рекорд?",
+                            url: `https://vk.com/app${APP_ID}`
+                        });
+                    } else {
+                        showError('Функция "Поделиться" недоступна');
+                    }
+                });
+                
+                console.log('Game initialized successfully');
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showError('Ошибка загрузки игры. Пожалуйста, обновите страницу.');
+                
+                // Резервный запуск без VK
+                elements.startBtn.addEventListener('click', startGame);
+                elements.restartBtn.addEventListener('click', startGame);
+                elements.hintBtn.addEventListener('click', showHint);
+            }
+        }
+
+        // Запуск при загрузке страницы
+        document.addEventListener('DOMContentLoaded', initGame);
+    </script>
+</body>
+</html>
